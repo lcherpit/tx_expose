@@ -30,7 +30,7 @@
  * @subpackage	tx_expose
  *
  */
-final class Tx_Expose_MVC_View_XMLView extends Tx_Expose_MVC_View_AbstractView {
+final class Tx_Expose_MVC_View_JSONView extends Tx_Expose_MVC_View_AbstractView {
 
 	/**
 	 * @var string
@@ -50,7 +50,8 @@ final class Tx_Expose_MVC_View_XMLView extends Tx_Expose_MVC_View_AbstractView {
 	/**
 	 * Renders the empty view
 	 *
-	 * @return string An empty string
+	 * @return void
+	 * @throws Tx_Expose_Exception_RuntimeException
 	 */
 	public function render() {
 		throw new Tx_Expose_Exception_RuntimeException(
