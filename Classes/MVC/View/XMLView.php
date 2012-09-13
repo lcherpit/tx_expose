@@ -1,5 +1,6 @@
 <?php
-/***************************************************************
+
+/**
  *  Copyright notice
  *
  *  (c) 2007-2012 Dominique Feyer (ttree) <dfeyer@ttree.ch>
@@ -20,7 +21,7 @@
  *  GNU General Public License for more details.
  *
  *  This copyright notice MUST APPEAR in all copies of the script!
- ***************************************************************/
+ * /
 
 /**
  * This view export the current data as XML
@@ -52,6 +53,9 @@ final class Tx_Expose_MVC_View_XMLView extends Tx_Expose_MVC_View_AbstractView {
 	 */
 	protected $document;
 
+	/**
+	 * Init
+	 */
 	public function __construct() {
 		parent::__construct();
 
@@ -67,20 +71,33 @@ final class Tx_Expose_MVC_View_XMLView extends Tx_Expose_MVC_View_AbstractView {
 	 * @return string An empty string
 	 */
 	public function render() {
-		$rootElement = $this->document->createElement($this->rootElementName);
+		$rootElementConfigurationElement = $this->getSettingByPath('api.conf.' . $this->rootElementName . '.element');
+		if ($rootElementConfigurationElement !== NULL) {
+			$rootElementName = $rootElementConfigurationElement;
+		} else {
+			$rootElementName = $this->rootElementName;
+		}
+		$rootElement = $this->document->createElement($rootElementName);
+
+		$this->appendAttributes($rootElement, $this->getSettingByPath('api.conf.' . $this->rootElementName));
 		$this->document->appendChild($rootElement);
 
-		$this->renderVariable($rootElement);
+		if ($subRootNodeName = $this->getSettingByPath('api.conf.' . $this->rootElementName . '.subRootNode.element')) {
+			$subRootElement = $this->document->createElement($subRootNodeName);
+			$rootElement->appendChild($subRootElement);
+			$this->renderVariable($subRootElement);
+		} else {
+			$this->renderVariable($rootElement);
+		}
 
 		return $this->document->saveXML();
 	}
 
 	/**
+	 * @param DOMElement $parentElement
 	 *
-	 * @param string $key
-	 * @param mixed $value
-	 * @return string
-	 * @throws Tx_Fluid_Core_ViewHelper_Exception
+	 * @return DOMElement
+	 * @throws Tx_Expose_Exception_InvalidConfigurationException
 	 */
 	protected function renderVariable(DOMElement $parentElement) {
 		$configurationPath = $this->getSettingByPath('api.conf.' . $this->rootElementName . '.path');
@@ -92,10 +109,8 @@ final class Tx_Expose_MVC_View_XMLView extends Tx_Expose_MVC_View_AbstractView {
 				1334309979
 			);
 		}
-
 		foreach ($this->variable as $baseNodeRecord) {
 			$rootElement = $this->document->createElement($this->baseElementName);
-
 			if (TRUE == $comment = $this->getSettingByPath('api.conf.' . $this->rootElementName . '.modelComment')) {
 				$rootElement->appendChild($this->document->createComment($comment));
 			}
@@ -107,11 +122,16 @@ final class Tx_Expose_MVC_View_XMLView extends Tx_Expose_MVC_View_AbstractView {
 		return $parentElement;
 	}
 
+	/**
+	 * @param $record
+	 * @param $configuration
+	 *
+	 * @return bool
+	 */
 	protected function checkRequiredFields($record, $configuration) {
-		foreach ($configuration as $key => $elementConfiguration) {
+		foreach ($configuration as $elementConfiguration) {
 			if (isset($elementConfiguration['required']) && $elementConfiguration['required'] == TRUE) {
-
-				// Todo add support for cObj, relation and relations
+					// Todo add support for cObj, relation and relations
 				$value = $this->getElementRawValue($record, $elementConfiguration['path'], $elementConfiguration);
 				if (trim($value) === '') {
 					return TRUE;
@@ -128,9 +148,10 @@ final class Tx_Expose_MVC_View_XMLView extends Tx_Expose_MVC_View_AbstractView {
 	 * @param $record
 	 * @param array $configuration
 	 * @param DOMElement $rootElement
-	 * @throws InvalidArgumentException
+	 * @param bool       $checkRequired
 	 *
 	 * @return bool
+	 * @throws Tx_Expose_Exception_InvalidConfigurationException
 	 */
 	protected function processDomainModel($record, array $configuration, DOMElement $rootElement, $checkRequired = FALSE) {
 
@@ -138,12 +159,12 @@ final class Tx_Expose_MVC_View_XMLView extends Tx_Expose_MVC_View_AbstractView {
 			return FALSE;
 		}
 
-		// Check required fields
+			// Check required fields
 		foreach ($configuration as $key => $elementConfiguration) {
 			$propertyPath = $elementConfiguration['path'];
 			$elementName = $elementConfiguration['element'] ? : t3lib_div::camelCaseToLowerCaseUnderscored($elementConfiguration['path']);
 
-			// Create element
+				// Create element
 			if (trim($elementName) === '') {
 				throw new Tx_Expose_Exception_InvalidConfigurationException(
 					'Element name can not be empty',
@@ -151,6 +172,9 @@ final class Tx_Expose_MVC_View_XMLView extends Tx_Expose_MVC_View_AbstractView {
 				);
 			}
 			$element = $this->document->createElement($elementName);
+
+				// check if we need to add attributes
+			$this->appendAttributes($element, $elementConfiguration, $record);
 
 			if (empty($elementConfiguration['type']) || !isset($elementConfiguration['type'])) {
 				$elementConfiguration['type'] = 'text';
@@ -161,16 +185,16 @@ final class Tx_Expose_MVC_View_XMLView extends Tx_Expose_MVC_View_AbstractView {
 					$this->appendTextChild($element, $record, $propertyPath, $elementConfiguration);
 					break;
 				case 'cdata':
-					$this->appendCDATATextChild($element, $record, $propertyPath, $elementConfiguration);
-
+					$this->appendCdataTextChild($element, $record, $propertyPath, $elementConfiguration);
+					break;
+				case 'complex' :
+					$this->appendComplexChildNode($element, $record, $elementConfiguration);
 					break;
 				case 'relation':
 					$this->appendSingleChildrenNode($element, $record, $propertyPath, $elementConfiguration);
-
 					break;
 				case 'relations':
 					$this->appendMultipleChildrenNodes($element, $record, $propertyPath, $elementConfiguration);
-
 					break;
 				default:
 					throw new Tx_Expose_Exception_InvalidConfigurationException(
@@ -179,8 +203,10 @@ final class Tx_Expose_MVC_View_XMLView extends Tx_Expose_MVC_View_AbstractView {
 					);
 			}
 
-			// Append element to document
-			$rootElement->appendChild($element);
+				// do not append if null
+			if ($element instanceof DOMElement) {
+				$rootElement->appendChild($element);
+			}
 		}
 
 		return TRUE;
@@ -193,6 +219,7 @@ final class Tx_Expose_MVC_View_XMLView extends Tx_Expose_MVC_View_AbstractView {
 	 * @param object|array $record
 	 * @param string $propertyPath
 	 * @param array $elementConfiguration
+	 * @return void
 	 */
 	protected function appendTextChild(DOMElement $element, $record, $propertyPath, array $elementConfiguration) {
 		if ($elementValue = $this->getElementValue($record, $propertyPath, $elementConfiguration, FALSE)) {
@@ -203,12 +230,14 @@ final class Tx_Expose_MVC_View_XMLView extends Tx_Expose_MVC_View_AbstractView {
 	/**
 	 * Append XML CDATA Text node
 	 *
-	 * @param DOMElement $element
+	 * @param DOMElement   $element
 	 * @param object|array $record
-	 * @param string $propertyPath
-	 * @param array $elementConfiguration
+	 * @param string       $propertyPath
+	 * @param array        $elementConfiguration
+	 *
+	 * @return void
 	 */
-	protected function appendCDATATextChild(DOMElement $element, $record, $propertyPath, array $elementConfiguration) {
+	protected function appendCdataTextChild(DOMElement $element, $record, $propertyPath, array $elementConfiguration) {
 		if ($elementValue = $this->getElementValue($record, $propertyPath, $elementConfiguration, FALSE)) {
 			$element->appendChild($this->document->createCDATASection($elementValue));
 		}
@@ -216,34 +245,47 @@ final class Tx_Expose_MVC_View_XMLView extends Tx_Expose_MVC_View_AbstractView {
 
 	/**
 	 * Process a multiple relations
+	 * Use explicit reference of $parentElement to handle the case
+	 * when removeIfEmpty is set.
 	 *
-	 * @param DOMElement $parentElement
+	 * @param DOMElement   $parentElement
 	 * @param object|array $record
-	 * @param string $propertyPath
-	 * @param array $elementConfiguration
+	 * @param string       $propertyPath
+	 * @param array        $elementConfiguration
+	 *
 	 * @throws Tx_Expose_Exception_InvalidConfigurationException
+	 * @return void
 	 */
-	protected function appendMultipleChildrenNodes(DOMElement $parentElement, $record, $propertyPath, array $elementConfiguration) {
+	protected function appendMultipleChildrenNodes(DOMElement &$parentElement, $record, $propertyPath, array $elementConfiguration) {
 		$relations = Tx_Extbase_Reflection_ObjectAccess::getPropertyPath($record, $propertyPath);
-		if (trim($elementConfiguration['conf']) === '') {
-			throw new Tx_Expose_Exception_InvalidConfigurationException(
-				'Unable to process relations without configuration',
-				1334310033
-			);
-		}
-		$relationConfiguration = $this->getSettingByPath($elementConfiguration['conf']);
+		if (!empty($elementConfiguration['conf']['removeIfEmpty']) && count($relations) < 1) {
+			$parentElement = NULL;
+		} else {
+			if (!is_array($elementConfiguration['conf']) && trim($elementConfiguration['conf']) === '') {
+				throw new Tx_Expose_Exception_InvalidConfigurationException(
+					'Unable to process relations without configuration',
+					1334310033
+				);
+			}
 
-		if (!is_array($relationConfiguration) || trim($elementConfiguration['children']) === '') {
-			throw new Tx_Expose_Exception_InvalidConfigurationException(
-				'Invalid configuration',
-				1334310035
-			);
-		}
+			$relationConfigurationPath      = $this->getSettingByPath($elementConfiguration['conf']['path']);
+			$relationConfigurationUseParent = !empty($elementConfiguration['conf']['useParentNode']);
+			if (!is_array($relationConfigurationPath) || trim($elementConfiguration['children']) === '') {
+				throw new Tx_Expose_Exception_InvalidConfigurationException(
+					'Invalid configuration',
+					1334310035
+				);
+			}
 
-		foreach ($relations as $record) {
 			$relationRootElement = $this->document->createElement($elementConfiguration['children']);
-			if ($this->processDomainModel($record, $relationConfiguration, $relationRootElement, TRUE)) {
-				$parentElement->appendChild($relationRootElement);
+			foreach ($relations as $record) {
+				if ($this->processDomainModel($record, $relationConfigurationPath, $relationRootElement, TRUE)) {
+					if (!empty($relationConfigurationUseParent) && $relationRootElement->childNodes instanceof DOMNodeList) {
+						$parentElement->appendChild($relationRootElement->firstChild);
+					} else {
+						$parentElement->appendChild($relationRootElement);
+					}
+				}
 			}
 		}
 	}
@@ -251,11 +293,13 @@ final class Tx_Expose_MVC_View_XMLView extends Tx_Expose_MVC_View_AbstractView {
 	/**
 	 * Process a multiple relations
 	 *
-	 * @param DOMElement $element
+	 * @param DOMElement   $element
 	 * @param object|array $record
-	 * @param string $propertyPath
-	 * @param array $elementConfiguration
+	 * @param string       $propertyPath
+	 * @param array        $elementConfiguration
+	 *
 	 * @throws Tx_Expose_Exception_InvalidConfigurationException
+	 * @return void
 	 */
 	protected function appendSingleChildrenNode(DOMElement $element, $record, $propertyPath, array $elementConfiguration) {
 		if (trim($elementConfiguration['conf']) === '') {
@@ -279,9 +323,65 @@ final class Tx_Expose_MVC_View_XMLView extends Tx_Expose_MVC_View_AbstractView {
 	}
 
 	/**
+	 * Process a node as complex type
+	 *
+	 * @param DOMElement   $element
+	 * @param object|array $record
+	 * @param array        $elementConfiguration
+	 *
+	 * @throws Tx_Expose_Exception_InvalidConfigurationException
+	 * @return void
+	 */
+	protected function appendComplexChildNode(DOMElement $element, $record, array $elementConfiguration = array()) {
+		if (!is_array($elementConfiguration['nodes']) && trim($elementConfiguration['nodes']) === '') {
+			throw new Tx_Expose_Exception_InvalidConfigurationException(
+				'Unable to process complex element without nodes definition',
+				1346688712
+			);
+		}
+		foreach ($elementConfiguration['nodes'] as $nodeRecordConfiguration) {
+			$this->processDomainModel($record, $nodeRecordConfiguration, $element, FALSE);
+		}
+	}
+
+	/**
+	 * Process attributes if any are configured
+	 *
+	 * @param DOMElement   $element
+	 * @param array        $elementConfiguration
+	 * @param array|object $record
+	 *
+	 * @return void
+	 */
+	protected function appendAttributes(DOMElement $element, $elementConfiguration, $record = NULL) {
+		if (!empty($elementConfiguration['attributes']) && is_array($elementConfiguration['attributes'])) {
+			foreach ($elementConfiguration['attributes'] as $attribute => $attributeConfiguration) {
+				$fetchedAttributeValue = '';
+
+				if (!empty($attributeConfiguration['path']) && $record !== NULL) {
+					$fetchedAttributeValue = $this->getElementValue($record, $attributeConfiguration['path'], $attributeConfiguration, FALSE);
+				}
+				if (empty($fetchedAttributeValue) && !empty($attributeConfiguration['attributeValue'])) {
+					$fetchedAttributeValue = $attributeConfiguration['attributeValue'];
+				}
+
+				if (!empty($fetchedAttributeValue)) {
+					if (!empty($attributeConfiguration['attributeName'])) {
+						$attribute = $attributeConfiguration['attributeName'];
+					}
+					$domAttribute        = $this->document->createAttribute($attribute);
+					$domAttribute->value = $fetchedAttributeValue;
+					$element->appendChild($domAttribute);
+				}
+			}
+		}
+	}
+
+	/**
 	 * Set XML Encoding
 	 *
 	 * @param string $encoding
+	 * @return void
 	 */
 	public function setEncoding($encoding) {
 		$this->encoding = $encoding;
@@ -291,6 +391,7 @@ final class Tx_Expose_MVC_View_XMLView extends Tx_Expose_MVC_View_AbstractView {
 	 * Set XML Version
 	 *
 	 * @param string $version
+	 * @return void
 	 */
 	public function setVersion($version) {
 		$this->version = $version;
