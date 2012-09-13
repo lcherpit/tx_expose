@@ -48,9 +48,10 @@ final class Tx_Expose_MVC_View_YAMLView extends Tx_Expose_MVC_View_AbstractView 
 	protected $document;
 
 	/**
-	 * Renders the empty view
+	 * Return an empty view
 	 *
-	 * @return string An empty string
+	 * @return void
+	 * @throws Tx_Expose_Exception_RuntimeException
 	 */
 	public function render() {
 		throw new Tx_Expose_Exception_RuntimeException(
